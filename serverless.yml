@@ -1,0 +1,218 @@
+
+service: group-1
+
+provider:
+  name: aws
+  stage: dev
+  region: eu-west-1
+  runtime: python3.8
+
+plugins:
+  - serverless-python-requirements
+  - serverless-iam-roles-per-function
+
+package:
+  individually: true
+  exclude:
+    - node_modules/**
+    - local_*
+
+functions:
+  extract:
+    handler: handler.start
+    module: extract
+    include:
+      - extract
+    timeout: 30
+    memorySize: 1024
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - sqs:SendMessage
+          - sqs:GetQueueUrl
+          - sqs:GetQueueAttributes
+        Resource: !GetAtt Group1SQSExtracttoTransform.Arn
+      - Effect: 'Allow'
+        Action:
+          - s3:GetObject
+          - s3:ListBucket
+        Resource:
+          - arn:aws:s3:::cafe-transactions-group-1
+          - arn:aws:s3:::cafe-transactions-group-1/*
+    events:
+      - schedule:
+          arn: !GetAtt Group1ScheduleRule.Arn
+          rate: cron(45 10 * * ? *)
+    
+  extractKinesis:
+    handler: handler.start
+    module: kinesislambda
+    include:
+      - kinesislambda
+    timeout: 30
+    memorySize: 1024
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - sqs:SendMessage
+          - sqs:GetQueueUrl
+          - sqs:GetQueueAttributes
+        Resource: !GetAtt Group1SQSKinesistoTransorm.Arn
+      - Effect: 'Allow'
+        Action:
+          - kinesis:DescribeStream
+          - kinesis:DescribeStreamSummary
+          - kinesis:GetRecords
+          - kinesis:GetShardIterator
+          - kinesis:ListShards
+          - kinesis:ListStreams
+          - kinesis:SubscribeToShard
+        Resource:
+          - arn:aws:kinesis:eu-west-1:579154747729:stream/store-stream
+    events:
+      - stream:
+          type: kinesis
+          arn: arn:aws:kinesis:eu-west-1:579154747729:stream/store-stream
+          batchSize: 1
+          startingPosition: LATEST
+          maximumRetryAttempts: 2
+          enabled: true
+
+  transform:
+    handler: handler.start
+    module: transform
+    include:
+      - transform
+    timeout: 126
+    memorySize: 1024
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action:
+          - sqs:ReceiveMessage
+          - sqs:DeleteMessage
+          - sqs:SendMessage
+          - sqs:GetQueueUrl
+          - sqs:GetQueueAttributes
+        Resource: !GetAtt Group1SQSTransformtoLoad.Arn
+    events:
+      - sqs:
+          arn: !GetAtt Group1SQSExtracttoTransform.Arn
+      - sqs:
+          arn: !GetAtt Group1SQSKinesistoTransorm.Arn
+  
+  load:
+    handler: handler.start
+    module: load
+    include:
+      - load
+      - psycopg2
+    timeout: 30
+    memorySize: 1024
+    iamRoleStatements:
+      - Effect: 'Allow'
+        Action: 
+          - sqs:ReceiveMessage
+        Resource: !GetAtt Group1SQSTransformtoLoad.Arn
+      - Effect: 'Allow'
+        Action:
+          - redshift:GetClusterCredentials
+          - redshift:DescribeClusters
+          - redshift-data:ExecuteStatement
+        Resource:
+          - arn:aws:redshift:eu-west-1:579154747729:dbuser:bir1-cluster/awsuser
+          - arn:aws:redshift:eu-west-1:579154747729:dbname:bir1-cluster/dev
+    events:
+      - sqs:
+          arn: !GetAtt Group1SQSTransformtoLoad.Arn
+    environment:
+      DB_CLUSTER: "bir1-cluster"
+      DB_HOST: "10.0.1.223"
+      DB_NAME: "dev"
+      DB_PASS: "*y3EoPZH*Luazyc#%i^xS#jc%n5$WSY^o%PThw!U"
+      DB_PORT: "5439"
+      DB_USER: "awsuser"
+    vpc:
+      securityGroupIds:
+        - sg-03601054033ee65d6
+        - sg-04ffa039212cd915c
+      subnetIds:
+        - subnet-0b0c0f6ea99bda1ee
+
+resources:
+  Resources:
+    Group1SQSExtracttoTransform:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "Group1SQSExtracttoTransform"
+    
+    Group3SQSTransformtoLoad:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "Group1SQSTransformtoLoad"
+        RedrivePolicy:
+          deadLetterTargetArn: !GetAtt TransformtoLoadDLQ.Arn
+          maxReceiveCount: 2
+
+    TransformtoLoadDLQ:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "Group1-DeadLetterQueue"
+
+    Group3SQSKinesistoTransorm:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "Group1SQSKinesistoTransorm"
+        VisibilityTimeout: 200
+
+    ExtractDestination:
+      Type: "AWS::Lambda::EventInvokeConfig"
+      Properties:
+        FunctionName: !Ref ExtractLambdaFunction
+        DestinationConfig:
+          OnSuccess:
+            Destination: !GetAtt Group1SQSExtracttoTransform.Arn
+        Qualifier: "$LATEST"
+    
+    TransformDestination:
+      Type: "AWS::Lambda::EventInvokeConfig"
+      Properties:
+        FunctionName: !Ref TransformLambdaFunction
+        DestinationConfig:
+          OnSuccess:
+            Destination: !GetAtt Group1SQSTransformtoLoad.Arn
+        Qualifier: "$LATEST"
+
+    KinesisDestination:
+      Type: "AWS::Lambda::EventInvokeConfig"
+      Properties:
+        FunctionName: !Ref ExtractKinesisLambdaFunction
+        DestinationConfig:
+          OnSuccess:
+            Destination: !GetAtt Group1SQSKinesistoTransorm.Arn
+        Qualifier: "$LATEST"
+
+    Group3ScheduleRule:
+      Type: AWS::Events::Rule
+      Properties: 
+        Description: "A daily trigger for our function"
+        Name: "Group3ScheduleRule"
+        ScheduleExpression: "cron(45 10 * * ? *)"
+        State: "ENABLED"
+        Targets: 
+          - 
+            Arn: 
+              Fn::GetAtt: 
+                - "ExtractLambdaFunction"
+                - "Arn"
+            Id: "ExtractLambdaFunction"
+    
+    PermissionForEventsToInvokeLambda: 
+      Type: AWS::Lambda::Permission
+      Properties: 
+        FunctionName: !Ref ExtractLambdaFunction
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: 
+          Fn::GetAtt: 
+            - "Group1ScheduleRule"
+            - "Arn"
