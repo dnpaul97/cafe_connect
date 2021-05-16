@@ -1,21 +1,21 @@
 {
   "name": "group-1-project",
   "version": "1.0.0",
-  "description": "## Infinity Customer Tracker App 2000",
+  "description": "## Cafe Connect Customer Tracker App",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/data-engineering-bir-1/team-3-project.git"
+    "url": "git+https://github.com/data-engineering-bir-1/team-1-project.git"
   },
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/data-engineering-bir-1/team-3-project/issues"
+    "url": "https://github.com/data-engineering-bir-1/team-1-project/issues"
   },
-  "homepage": "https://github.com/data-engineering-bir-1/team-3-project#readme",
+  "homepage": "https://github.com/data-engineering-bir-1/team-1-project#readme",
   "devDependencies": {
     "serverless-python-requirements": "^5.1.0"
   }
